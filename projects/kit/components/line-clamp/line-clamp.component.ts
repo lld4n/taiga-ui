@@ -1,5 +1,6 @@
 import {type BooleanInput, coerceBooleanProperty} from '@angular/cdk/coercion';
 import {
+    afterRenderEffect,
     type AfterViewChecked,
     ChangeDetectionStrategy,
     Component,
@@ -7,6 +8,7 @@ import {
     ElementRef,
     inject,
     input,
+    signal,
     viewChild,
 } from '@angular/core';
 import {outputFromObservable, toObservable, toSignal} from '@angular/core/rxjs-interop';
@@ -55,6 +57,8 @@ export class TuiLineClamp implements AfterViewChecked {
     private readonly el = tuiInjectElement();
     private readonly isOverflown$ = new Subject<boolean>();
     private readonly maxHeight = computed(() => this.line() * this.linesLimit());
+    private readonly tick = signal(0);
+    private readonly overflown = signal(false);
 
     public readonly line = computed(() => this.lineHeight() + this.offset());
     public readonly lineHeight = input(24);
@@ -85,25 +89,41 @@ export class TuiLineClamp implements AfterViewChecked {
         {initialValue: 0},
     );
 
-    public ngAfterViewChecked(): void {
-        this.update();
-        this.isOverflown$.next(this.overflown);
+    constructor() {
+        afterRenderEffect({
+            earlyRead: () => {
+                this.tick();
+
+                const {scrollHeight, scrollWidth} = this.outlet().nativeElement;
+                const {clientWidth} = this.el;
+
+                return {
+                    scrollHeight,
+                    overflown:
+                        scrollHeight > this.maxHeight() || scrollWidth > clientWidth,
+                };
+            },
+            write: (measured) => {
+                const {scrollHeight, overflown} = measured();
+
+                this.el.style.height = tuiPx(scrollHeight);
+                this.el.style.maxHeight = tuiPx(this.maxHeight());
+                this.el.classList.toggle('_overflown', overflown);
+                this.overflown.set(overflown);
+                this.isOverflown$.next(overflown);
+            },
+        });
     }
 
-    protected get overflown(): boolean {
-        const {scrollHeight, scrollWidth} = this.outlet().nativeElement;
-        const {clientWidth} = this.el;
-
-        return scrollHeight > this.maxHeight() || scrollWidth > clientWidth;
+    public ngAfterViewChecked(): void {
+        this.update();
     }
 
     protected get computedContent(): PolymorpheusContent {
-        return this.showHint() && this.overflown ? this.content() : '';
+        return this.showHint() && this.overflown() ? this.content() : '';
     }
 
     protected update(): void {
-        this.el.style.height = tuiPx(this.outlet().nativeElement.scrollHeight);
-        this.el.style.maxHeight = tuiPx(this.maxHeight());
-        this.el.classList.toggle('_overflown', this.overflown);
+        this.tick.update((value) => value + 1);
     }
 }
